@@ -401,8 +401,26 @@ module el2_veer_lockstep
   veer_outputs_t delayed_main_core_outputs;
   veer_outputs_t shadow_core_outputs;
 
-  assign shadow_core_inputs = delay_input_d[LockstepDelayPipeStages];
-  assign delayed_main_core_outputs = delay_output_d[LockstepDelayPipeStages];
+  // Insert optimization barriers (prim_buf) at the shadow-core IOs so that
+  // synthesis tools cannot prove the shadow core / comparison redundant and
+  // optimize them away.
+  veer_inputs_t  shadow_core_inputs_pre;
+  veer_outputs_t delayed_main_core_outputs_pre;
+  assign shadow_core_inputs_pre        = delay_input_d[LockstepDelayPipeStages];
+  assign delayed_main_core_outputs_pre = delay_output_d[LockstepDelayPipeStages];
+
+  el2_prim_buf #(
+    .Width($bits(veer_inputs_t))
+  ) u_shadow_inputs_buf (
+      .in_i (shadow_core_inputs_pre),
+      .out_o(shadow_core_inputs)
+  );
+  el2_prim_buf #(
+    .Width($bits(veer_outputs_t))
+  ) u_main_outputs_buf (
+      .in_i (delayed_main_core_outputs_pre),
+      .out_o(delayed_main_core_outputs)
+  );
 
   // Capture input
   assign main_core_inputs.rst_vec = rst_vec;
@@ -1118,6 +1136,12 @@ module el2_veer_lockstep
 
 `ifdef RV_LOCKSTEP_REGFILE_ENABLE
   logic regfile_corrupted;
+  // The regfile comparison is already protected by the shadow_core_inputs
+  // optimization barrier above: shadow_core_regfile is driven by the shadow
+  // core, whose inputs are buffered through el2_prim_buf, so this comparison
+  // cannot be proven constant and optimized away. (No separate prim_buf is
+  // inserted here because the regfile struct types are scoped inside
+  // el2_regfile_if and cannot size a parameter via a hierarchical reference.)
   assign regfile_corrupted   = (delayed_main_core_regfile[LockstepDelayPipeStages].gpr != shadow_core_regfile.gpr)
                              | (delayed_main_core_regfile[LockstepDelayPipeStages].tlu != shadow_core_regfile.tlu);
   assign corruption_detected = mubi_from_bool(outputs_corrupted | regfile_corrupted);
